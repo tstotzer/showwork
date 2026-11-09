@@ -92,8 +92,13 @@ The behavioral suite runs through the existing genesis receipt once, using
 retracted, duplicated or changed suite command before execution. It uses the
 normal verifier for both the full test command and the remaining genesis
 artifact claims. It does not cache results, rewrite receipts or omit tests.
-The genesis step explicitly allows 600 seconds for its command inside the
-15-minute job. Without this setting the verifier's 120-second default can
+The genesis step explicitly allows 600 seconds for its command. The test job
+has a 45-minute cap: 600 seconds for genesis, 1800 seconds for a command in
+today's verification, and a five-minute allowance for setup and UI checks.
+The job cap still bounds the whole job; repeated command checks or slower
+setup can exhaust it. The policy test checks that each job cap covers its
+largest declared command budget, not the total time of every replay.
+Without the genesis setting the verifier's 120-second default can
 terminate a passing full suite. This is a bounded execution budget, not a
 timeout retry or a waiver; a suite exceeding it still fails.
 Real subprocess fixtures prove one execution and propagation of suite failures,

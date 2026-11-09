@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from showwork import checks
 
 
@@ -23,6 +25,59 @@ def input_block(action: str, name: str) -> str:
     )
     assert match, f"action input block missing: {name}"
     return match.group(0)
+
+
+def assert_job_command_budgets(workflow: str) -> None:
+    """Check the literal job/step budgets in this repository's CI workflow."""
+    jobs = re.findall(
+        r"(?ms)^  ([A-Za-z0-9_-]+):\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)",
+        workflow,
+    )
+    assert jobs, "CI workflow must declare jobs"
+    for name, job in jobs:
+        budgets = re.findall(
+            r'^          SHOWWORK_COMMAND_TIMEOUT_SECONDS: ["\']?([0-9]+)["\']?$',
+            job,
+            re.MULTILINE,
+        )
+        if not budgets:
+            continue
+        cap = re.search(r"(?m)^    timeout-minutes: ([0-9]+)$", job)
+        assert cap, f"{name}: declare a job cap for command checks"
+        assert int(cap.group(1)) * 60 >= max(map(int, budgets)), (
+            f"{name}: job cap is smaller than its declared command budget"
+        )
+
+
+def test_ci_job_caps_cover_declared_command_budgets():
+    # REGRESSION: a 15-minute job could not deliver its 1800-second command budget.
+    assert_job_command_budgets(read_repo_file(".github", "workflows", "ci.yml"))
+
+
+@pytest.mark.parametrize("cap,budget", [(9, 600), (10, 601)])
+def test_ci_job_budget_guard_rejects_lower_cap_or_higher_budget(cap, budget):
+    # The earlier, larger job must not lend its cap to this job.
+    workflow = f'''jobs:
+  earlier:
+    timeout-minutes: 60
+    steps:
+      - run: showwork verify
+        env:
+          SHOWWORK_COMMAND_TIMEOUT_SECONDS: "1800"
+  later:
+    timeout-minutes: {cap}
+    steps:
+      - run: showwork verify
+        env:
+          SHOWWORK_COMMAND_TIMEOUT_SECONDS: "{budget}"
+'''
+    with pytest.raises(AssertionError, match="later: job cap is smaller"):
+        assert_job_command_budgets(workflow)
+    # Equality is sufficient for this guard; setup headroom is a separate choice.
+    assert_job_command_budgets(
+        workflow.replace(f"timeout-minutes: {cap}", "timeout-minutes: 10")
+        .replace(f'"{budget}"', '"600"')
+    )
 
 
 def test_fork_prs_get_isolated_behavior_and_clean_room_checks():
